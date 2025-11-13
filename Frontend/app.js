@@ -259,13 +259,65 @@ async function startRecording() {
     if (isRecording) return;
     
     try {
+        // Check if we're in a secure context (HTTPS or localhost)
+        const isSecureContext = window.isSecureContext || 
+                                window.location.protocol === 'https:' || 
+                                window.location.hostname === 'localhost' || 
+                                window.location.hostname === '127.0.0.1';
+        
+        if (!isSecureContext) {
+            throw new Error(
+                'Microphone access requires a secure connection (HTTPS).\n' +
+                'Please access this page via:\n' +
+                '- https://your-domain.com (HTTPS)\n' +
+                '- http://localhost:8080 (localhost is secure)\n' +
+                'Current URL: ' + window.location.href
+            );
+        }
+        
         // Check if getUserMedia is available
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            const protocol = window.location.protocol;
-            if (protocol === 'file:') {
-                throw new Error('Cannot access microphone from file:// URL. Please access via http://localhost:8080');
-            }
-            throw new Error('getUserMedia is not supported in this browser. Please use Chrome, Firefox, Safari, or Edge.');
+        let getUserMedia = null;
+        
+        // Try modern API first
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        }
+        // Fallback to legacy API (deprecated but still used by some browsers)
+        else if (navigator.getUserMedia) {
+            getUserMedia = (constraints) => {
+                return new Promise((resolve, reject) => {
+                    navigator.getUserMedia(constraints, resolve, reject);
+                });
+            };
+        }
+        // Check if WebRTC is supported at all
+        else if (!navigator.mediaDevices) {
+            throw new Error(
+                'WebRTC is not supported in this browser.\n' +
+                'Please use a modern browser like Chrome, Firefox, Safari, or Edge.\n' +
+                'Make sure you\'re using the latest version.'
+            );
+        }
+        else {
+            throw new Error(
+                'getUserMedia is not available.\n' +
+                'This might be due to:\n' +
+                '1. Browser not supporting WebRTC\n' +
+                '2. Page not loaded over HTTPS or localhost\n' +
+                '3. Browser permissions blocked\n' +
+                'Current URL: ' + window.location.href
+            );
+        }
+        
+        // Check protocol
+        const protocol = window.location.protocol;
+        if (protocol === 'file:') {
+            throw new Error(
+                'Cannot access microphone from file:// URL.\n' +
+                'Please run a local server:\n' +
+                'cd Frontend && python3 -m http.server 8080\n' +
+                'Then access: http://localhost:8080'
+            );
         }
         
         // Connect WebSocket if not connected
@@ -273,9 +325,9 @@ async function startRecording() {
             await connectWebSocket();
         }
         
-        // Get user media
+        // Get user media using the appropriate API
         if (!mediaStream) {
-            mediaStream = await navigator.mediaDevices.getUserMedia({
+            mediaStream = await getUserMedia({
                 audio: {
                     channelCount: 1,
                     sampleRate: 16000,
@@ -336,12 +388,31 @@ async function startRecording() {
         console.error('Error starting recording:', error);
         let errorMessage = error.message || 'Unknown error';
         
+        // Handle specific error types
         if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-            errorMessage = 'Microphone access denied. Please allow microphone access in your browser settings.';
+            errorMessage = 'Microphone access denied.\n\nPlease:\n1. Click the lock icon in your browser address bar\n2. Allow microphone access\n3. Refresh the page';
         } else if (error.name === 'NotFoundError') {
-            errorMessage = 'No microphone found. Please connect a microphone.';
+            errorMessage = 'No microphone found. Please connect a microphone and try again.';
         } else if (error.message && error.message.includes('file://')) {
             errorMessage = 'Cannot access microphone from file:// URL.\n\nPlease:\n1. Start a local server: cd Frontend && python3 -m http.server 8080\n2. Open http://localhost:8080 in your browser';
+        } else if (error.message && (error.message.includes('secure connection') || error.message.includes('HTTPS'))) {
+            // This is the secure context error - provide detailed instructions
+            const hostname = window.location.hostname;
+            const isIPAddress = /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
+            
+            if (isIPAddress) {
+                errorMessage = 'Microphone access requires HTTPS when accessing via IP address.\n\n' +
+                              'SOLUTIONS:\n\n' +
+                              'Option 1 (Recommended): Access via localhost on each machine\n' +
+                              'On each laptop, run:\n' +
+                              '  cd Frontend && python3 -m http.server 8080\n' +
+                              'Then open: http://localhost:8080\n\n' +
+                              'Option 2: Set up HTTPS\n' +
+                              'Use a tool like ngrok or set up a local HTTPS server.\n\n' +
+                              'Current URL: ' + window.location.href;
+            } else {
+                errorMessage = error.message;
+            }
         }
         
         status.textContent = errorMessage;
