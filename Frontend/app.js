@@ -8,6 +8,9 @@ let isRecording = false;
 let audioContext = null;
 let processor = null;
 let pendingTTSAudio = null; // Store TTS audio metadata
+let ttsStreamingContext = null; // AudioContext for streaming TTS playback
+let ttsAudioQueue = []; // Queue for streaming TTS audio chunks
+let isTTSStreaming = false; // Track if TTS is currently streaming
 
 // DOM Elements
 const talkButton = document.getElementById('talkButton');
@@ -18,7 +21,21 @@ const languageSelect = document.getElementById('languageSelect');
 const ttsModelSelect = document.getElementById('ttsModelSelect');
 const sttLatency = document.getElementById('sttLatency');
 const geminiLatency = document.getElementById('geminiLatency');
+const geminiBreakdown = document.getElementById('geminiBreakdown');
 const ttsLatency = document.getElementById('ttsLatency');
+const ttsBreakdown = document.getElementById('ttsBreakdown');
+
+// Store latency metrics for components that have multiple metrics
+const latencyMetrics = {
+    gemini: {
+        firstToken: null,
+        total: null
+    },
+    tts: {
+        firstAudio: null,
+        total: null
+    }
+};
 
 // Selected language (default: Spanish)
 let selectedLanguage = 'Spanish';
@@ -105,12 +122,16 @@ async function connectWebSocket() {
             resolve();
         };
         
-        websocket.onmessage = (event) => {
+        websocket.onmessage = async (event) => {
             // Check if message is binary (TTS audio) or text (JSON)
             if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
                 // Handle binary audio data (TTS audio)
-                if (pendingTTSAudio) {
-                    handleTTSAudio(event.data, pendingTTSAudio);
+                if (isTTSStreaming) {
+                    // Streaming TTS - play chunk immediately
+                    await handleTTSStreamingChunk(event.data);
+                } else if (pendingTTSAudio) {
+                    // Non-streaming TTS - complete audio
+                    await handleTTSAudio(event.data, pendingTTSAudio);
                     pendingTTSAudio = null; // Clear after use
                 }
             } else {
@@ -156,7 +177,25 @@ function handleWebSocketMessage(message) {
             break;
         
         case 'gemini_response':
+            // Complete response (non-streaming mode, for backward compatibility)
             displayGeminiResponse(message.text);
+            break;
+        
+        case 'gemini_chunk':
+            // Streaming chunk - append to existing response
+            displayGeminiChunk(message.text, message.is_complete);
+            break;
+        
+        case 'tts_chunk':
+            // Streaming TTS chunk - handle header or audio chunk
+            if (message.is_first) {
+                // Initialize streaming TTS playback
+                handleTTSStreamingStart(message);
+            } else if (message.is_complete) {
+                // Finalize streaming TTS
+                handleTTSStreamingComplete();
+            }
+            // Note: Audio chunks come as binary, handled in onmessage
             break;
         
         case 'latency':
@@ -172,44 +211,161 @@ function handleWebSocketMessage(message) {
 }
 
 function displayLatency(component, latencyMs, details) {
-    const latencyText = `${latencyMs}ms`;
-    let element = null;
+    const metric = details?.metric;
     
     switch (component) {
         case 'stt':
-            element = sttLatency;
+            // STT only has one metric (total time)
+            sttLatency.textContent = `${latencyMs}ms`;
+            sttLatency.className = 'latency-value';
+            applyLatencyColor(sttLatency, latencyMs);
+            if (details) {
+                sttLatency.title = Object.entries(details)
+                    .map(([key, value]) => `${key}: ${value}`)
+                    .join(', ');
+            }
             break;
+            
         case 'gemini':
-            element = geminiLatency;
+            // Store both metrics
+            if (metric === 'time_to_first_token') {
+                latencyMetrics.gemini.firstToken = latencyMs;
+                console.log(`[Gemini] Stored first token: ${latencyMs}ms`);
+            } else if (metric === 'total_time') {
+                latencyMetrics.gemini.total = latencyMs;
+                console.log(`[Gemini] Stored total: ${latencyMs}ms`);
+            } else {
+                console.warn(`[Gemini] Unknown metric: ${metric}`);
+            }
+            
+            // Display both metrics
+            updateGeminiLatencyDisplay(details);
             break;
+            
         case 'tts':
-            element = ttsLatency;
+            // Store both metrics
+            if (metric === 'time_to_first_audio') {
+                latencyMetrics.tts.firstAudio = latencyMs;
+                console.log(`[TTS] Stored first audio: ${latencyMs}ms`);
+            } else if (metric === 'total_time') {
+                latencyMetrics.tts.total = latencyMs;
+                console.log(`[TTS] Stored total: ${latencyMs}ms`);
+            } else {
+                console.warn(`[TTS] Unknown metric: ${metric}`);
+            }
+            
+            // Display both metrics
+            updateTTSLatencyDisplay(details);
             break;
-    }
-    
-    if (element) {
-        element.textContent = latencyText;
-        element.className = 'latency-value';
-        
-        // Color code based on latency
-        if (latencyMs < 500) {
-            element.classList.add('latency-good');
-        } else if (latencyMs < 1500) {
-            element.classList.add('latency-ok');
-        } else {
-            element.classList.add('latency-slow');
-        }
-        
-        // Add tooltip with details if available
-        if (details) {
-            const detailsText = Object.entries(details)
-                .map(([key, value]) => `${key}: ${value}`)
-                .join(', ');
-            element.title = detailsText;
-        }
     }
     
     console.log(`[Latency] ${component}: ${latencyMs}ms`, details || '');
+}
+
+function updateGeminiLatencyDisplay(details) {
+    const { firstToken, total } = latencyMetrics.gemini;
+    
+    console.log('[Gemini Latency]', { firstToken, total, details });
+    
+    if (firstToken !== null && total !== null) {
+        // Show both metrics: "first/total"
+        geminiLatency.textContent = `${firstToken}ms / ${total}ms`;
+        if (geminiBreakdown) {
+            geminiBreakdown.textContent = `(first: ${firstToken}ms, total: ${total}ms)`;
+            geminiBreakdown.className = 'latency-breakdown';
+            geminiBreakdown.style.display = 'inline';
+        }
+        
+        // Color code based on first token latency (perceived latency)
+        applyLatencyColor(geminiLatency, firstToken);
+    } else if (firstToken !== null) {
+        // Only first token available
+        geminiLatency.textContent = `${firstToken}ms (first)`;
+        if (geminiBreakdown) {
+            geminiBreakdown.textContent = '';
+            geminiBreakdown.style.display = 'none';
+        }
+        applyLatencyColor(geminiLatency, firstToken);
+    } else if (total !== null) {
+        // Only total available
+        geminiLatency.textContent = `${total}ms (total)`;
+        if (geminiBreakdown) {
+            geminiBreakdown.textContent = '';
+            geminiBreakdown.style.display = 'none';
+        }
+        applyLatencyColor(geminiLatency, total);
+    }
+    
+    // Add tooltip with details if available
+    if (details) {
+        const detailsText = Object.entries(details)
+            .filter(([key]) => key !== 'metric') // Exclude metric from tooltip
+            .map(([key, value]) => `${key}: ${value}`)
+            .join(', ');
+        if (detailsText) {
+            geminiLatency.title = detailsText;
+        }
+    }
+}
+
+function updateTTSLatencyDisplay(details) {
+    const { firstAudio, total } = latencyMetrics.tts;
+    
+    console.log('[TTS Latency]', { firstAudio, total, details });
+    
+    if (firstAudio !== null && total !== null) {
+        // Show both metrics: "first/total"
+        ttsLatency.textContent = `${firstAudio}ms / ${total}ms`;
+        if (ttsBreakdown) {
+            ttsBreakdown.textContent = `(first: ${firstAudio}ms, total: ${total}ms)`;
+            ttsBreakdown.className = 'latency-breakdown';
+            ttsBreakdown.style.display = 'inline';
+        }
+        
+        // Color code based on first audio latency (perceived latency)
+        applyLatencyColor(ttsLatency, firstAudio);
+    } else if (firstAudio !== null) {
+        // Only first audio available
+        ttsLatency.textContent = `${firstAudio}ms (first)`;
+        if (ttsBreakdown) {
+            ttsBreakdown.textContent = '';
+            ttsBreakdown.style.display = 'none';
+        }
+        applyLatencyColor(ttsLatency, firstAudio);
+    } else if (total !== null) {
+        // Only total available
+        ttsLatency.textContent = `${total}ms (total)`;
+        if (ttsBreakdown) {
+            ttsBreakdown.textContent = '';
+            ttsBreakdown.style.display = 'none';
+        }
+        applyLatencyColor(ttsLatency, total);
+    }
+    
+    // Add tooltip with details if available
+    if (details) {
+        const detailsText = Object.entries(details)
+            .filter(([key]) => key !== 'metric') // Exclude metric from tooltip
+            .map(([key, value]) => `${key}: ${value}`)
+            .join(', ');
+        if (detailsText) {
+            ttsLatency.title = detailsText;
+        }
+    }
+}
+
+function applyLatencyColor(element, latencyMs) {
+    // Remove existing color classes
+    element.classList.remove('latency-good', 'latency-ok', 'latency-slow');
+    
+    // Add color based on latency
+    if (latencyMs < 500) {
+        element.classList.add('latency-good');
+    } else if (latencyMs < 1500) {
+        element.classList.add('latency-ok');
+    } else {
+        element.classList.add('latency-slow');
+    }
 }
 
 function displayTranscript(text, isFinal) {
@@ -252,6 +408,162 @@ function displayGeminiResponse(text) {
     
     // Scroll to bottom
     geminiResponse.scrollTop = geminiResponse.scrollHeight;
+}
+
+function displayGeminiChunk(chunk, isComplete) {
+    // Remove placeholder if exists
+    const placeholder = geminiResponse.querySelector('.placeholder');
+    if (placeholder) {
+        placeholder.remove();
+    }
+    
+    // Create or get response element for streaming
+    let responseElement = geminiResponse.querySelector('.gemini-response-text');
+    if (!responseElement) {
+        responseElement = document.createElement('p');
+        responseElement.className = 'gemini-response-text';
+        geminiResponse.appendChild(responseElement);
+        responseElement.textContent = ''; // Initialize empty
+    }
+    
+    // Append chunk to existing text (streaming)
+    if (chunk) {
+        responseElement.textContent += chunk;
+        
+        // Auto-scroll to bottom to show latest text
+        geminiResponse.scrollTop = geminiResponse.scrollHeight;
+    }
+    
+    // If complete, we can do any final formatting
+    if (isComplete) {
+        console.log('Gemini streaming complete');
+    }
+}
+
+// TTS Streaming Functions
+function handleTTSStreamingStart(metadata) {
+    // Initialize streaming TTS playback.
+    // Args:
+    //   metadata: Metadata object with sample_rate, format, etc.
+    console.log('Starting TTS streaming:', metadata);
+    isTTSStreaming = true;
+    ttsAudioQueue = [];
+    
+    // Create AudioContext for streaming playback
+    const sampleRate = metadata.sample_rate || 24000;
+    ttsStreamingContext = new (window.AudioContext || window.webkitAudioContext)({
+        sampleRate: sampleRate
+    });
+    
+    // Resume context if suspended
+    if (ttsStreamingContext.state === 'suspended') {
+        ttsStreamingContext.resume();
+    }
+}
+
+async function handleTTSStreamingChunk(audioData) {
+    // Handle a streaming TTS audio chunk and play it immediately.
+    // Args:
+    //   audioData: Audio chunk as ArrayBuffer or Blob
+    try {
+        if (!ttsStreamingContext || ttsStreamingContext.state === 'closed') {
+            console.warn('TTS streaming context not available');
+            return;
+        }
+        
+        // Convert ArrayBuffer or Blob to ArrayBuffer
+        let arrayBuffer;
+        if (audioData instanceof Blob) {
+            arrayBuffer = await audioData.arrayBuffer();
+        } else if (audioData instanceof ArrayBuffer) {
+            arrayBuffer = audioData;
+        } else {
+            console.error('Unexpected audio data type:', audioData.constructor.name);
+            return;
+        }
+        
+        if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+            return;
+        }
+        
+        const sampleRate = ttsStreamingContext.sampleRate;
+        
+        // Convert Int16 PCM to Float32 for Web Audio API
+        const int16Array = new Int16Array(arrayBuffer);
+        const float32Array = new Float32Array(int16Array.length);
+        
+        for (let i = 0; i < int16Array.length; i++) {
+            // Normalize Int16 (-32768 to 32767) to Float32 (-1.0 to 1.0)
+            float32Array[i] = int16Array[i] / 32768.0;
+        }
+        
+        // Create audio buffer
+        const audioBuffer = ttsStreamingContext.createBuffer(1, float32Array.length, sampleRate);
+        audioBuffer.getChannelData(0).set(float32Array);
+        
+        // Create and play audio source
+        const source = ttsStreamingContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ttsStreamingContext.destination);
+        
+        // Queue the source to play
+        const currentTime = ttsStreamingContext.currentTime;
+        const nextStartTime = ttsAudioQueue.length > 0 
+            ? ttsAudioQueue[ttsAudioQueue.length - 1].endTime 
+            : currentTime;
+        
+        source.start(nextStartTime);
+        
+        // Track this chunk
+        ttsAudioQueue.push({
+            source: source,
+            startTime: nextStartTime,
+            endTime: nextStartTime + audioBuffer.duration
+        });
+        
+        // Don't clean up sources while streaming - we need to track them for completion
+        // Only clean up if we're not streaming anymore
+        if (!isTTSStreaming) {
+            const now = ttsStreamingContext.currentTime;
+            ttsAudioQueue = ttsAudioQueue.filter(item => item.endTime > now);
+        }
+        
+    } catch (error) {
+        console.error('Error playing TTS streaming chunk:', error);
+    }
+}
+
+function handleTTSStreamingComplete() {
+    // Finalize streaming TTS playback.
+    console.log('TTS streaming complete');
+    isTTSStreaming = false;
+    
+    // Wait for all queued audio to finish playing before closing context
+    if (ttsAudioQueue.length > 0 && ttsStreamingContext) {
+        // Find the latest end time from all queued chunks
+        const latestEndTime = Math.max(...ttsAudioQueue.map(item => item.endTime));
+        const currentTime = ttsStreamingContext.currentTime;
+        const remainingDuration = Math.max(0, latestEndTime - currentTime);
+        
+        console.log(`Waiting ${(remainingDuration * 1000).toFixed(0)}ms for audio to finish`);
+        
+        // Wait for all audio to finish, plus a small buffer
+        setTimeout(() => {
+            if (ttsStreamingContext && ttsStreamingContext.state !== 'closed') {
+                ttsStreamingContext.close();
+                ttsStreamingContext = null;
+            }
+            ttsAudioQueue = [];
+            console.log('TTS audio playback finished');
+        }, (remainingDuration * 1000) + 500); // Add 500ms buffer
+    } else {
+        // No audio queued, close immediately
+        if (ttsStreamingContext && ttsStreamingContext.state !== 'closed') {
+            ttsStreamingContext.close();
+            ttsStreamingContext = null;
+        }
+        ttsAudioQueue = [];
+    }
 }
 
 async function handleTTSAudio(audioData, metadata) {
@@ -329,6 +641,15 @@ async function handleTTSAudio(audioData, metadata) {
 
 async function startRecording() {
     if (isRecording) return;
+    
+    // Reset latency metrics for new conversation
+    latencyMetrics.gemini = { firstToken: null, total: null };
+    latencyMetrics.tts = { firstAudio: null, total: null };
+    geminiLatency.textContent = '-';
+    geminiBreakdown.textContent = '';
+    ttsLatency.textContent = '-';
+    ttsBreakdown.textContent = '';
+    sttLatency.textContent = '-';
     
     try {
         // Check if we're in a secure context (HTTPS or localhost)

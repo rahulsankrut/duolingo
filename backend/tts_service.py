@@ -19,7 +19,7 @@ Reference: https://cloud.google.com/text-to-speech/docs/gemini-tts
 import os
 import asyncio
 import concurrent.futures
-from typing import Optional, Tuple
+from typing import Optional, Tuple, AsyncIterator
 from pathlib import Path
 from dotenv import load_dotenv
 from google.cloud import texttospeech
@@ -307,3 +307,105 @@ async def synthesize_speech_async(
         # Wait for result without blocking the event loop
         audio_content = await loop.run_in_executor(None, future.result)
         return audio_content
+
+
+async def synthesize_speech_streaming_async(
+    text: str,
+    voice_name: Optional[str] = None,
+    language_code: Optional[str] = None,
+    prompt: Optional[str] = None,
+    model_name: Optional[str] = None
+) -> AsyncIterator[bytes]:
+    """Convert text to speech using streaming synthesis (yields audio chunks as they arrive).
+    
+    This function streams TTS audio chunks as they're generated, allowing the frontend
+    to start playing audio before synthesis is complete.
+    
+    Reference: https://cloud.google.com/text-to-speech/docs/create-audio-text-streaming
+    
+    Args:
+        text: The text to convert to speech
+        voice_name: Voice name (optional - will auto-detect if not provided)
+        language_code: Language code (optional - will auto-detect if not provided)
+        prompt: Optional prompt to control tone/style
+        model_name: Gemini-TTS model to use (optional, uses default from config)
+    
+    Yields:
+        Audio chunks as bytes (PCM format) as they arrive from the TTS API
+    """
+    try:
+        # Create TTS client
+        client = texttospeech.TextToSpeechClient()
+        
+        # Auto-detect language and voice if not provided
+        if not language_code or not voice_name:
+            detected_lang = detect_language(text)
+            voice_name, language_code = get_voice_for_language(detected_lang)
+            print(f"Detected language: {detected_lang}, using voice: {voice_name}, language: {language_code}")
+        
+        # Use provided model or default from configuration
+        tts_model = model_name or GEMINI_TTS_MODEL
+        
+        # Create streaming config request
+        config_request = texttospeech.StreamingSynthesizeRequest(
+            streaming_config=texttospeech.StreamingSynthesizeConfig(
+                voice=texttospeech.VoiceSelectionParams(
+                    language_code=language_code,
+                    name=voice_name,
+                    model_name=tts_model
+                ),
+                streaming_audio_config=texttospeech.StreamingAudioConfig(
+                    audio_encoding=texttospeech.AudioEncoding.PCM,  # Use PCM for streaming (not LINEAR16 which includes WAV header)
+                    sample_rate_hertz=DEFAULT_SAMPLE_RATE
+                )
+            )
+        )
+        
+        # Create text input request
+        text_request = texttospeech.StreamingSynthesizeRequest(
+            input=texttospeech.StreamingSynthesisInput(
+                text=text,
+                prompt=prompt or DEFAULT_PROMPT
+            )
+        )
+        
+        # Request generator function
+        def request_generator():
+            yield config_request  # Send config first
+            yield text_request    # Then send text
+        
+        # Stream synthesis in thread pool since it's blocking
+        loop = asyncio.get_event_loop()
+        
+        def stream_generator():
+            """Generator that yields audio chunks from streaming response."""
+            streaming_responses = client.streaming_synthesize(request_generator())
+            for response in streaming_responses:
+                if response.audio_content:
+                    yield response.audio_content
+        
+        # Run streaming in thread pool and yield chunks asynchronously
+        stream = stream_generator()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            while True:
+                try:
+                    # Get next chunk from stream (blocking operation)
+                    chunk = await loop.run_in_executor(
+                        executor,
+                        lambda: next(stream, None)
+                    )
+                    if chunk is None:
+                        break
+                    yield chunk
+                except StopIteration:
+                    break
+                except Exception as e:
+                    print(f"Error in TTS streaming chunk: {e}")
+                    break
+                    
+    except Exception as e:
+        print(f"Error synthesizing speech with Gemini-TTS streaming: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return empty iterator on error
+        return

@@ -24,8 +24,10 @@ from fastapi import WebSocket
 # Using constants prevents typos and makes the code more maintainable
 MSG_TYPE_STATUS = "status"              # Status updates (e.g., "Connected")
 MSG_TYPE_TRANSCRIPT = "transcript"      # Speech transcription results
-MSG_TYPE_GEMINI_RESPONSE = "gemini_response"  # Gemini tutor's text response
+MSG_TYPE_GEMINI_RESPONSE = "gemini_response"  # Gemini tutor's text response (complete)
+MSG_TYPE_GEMINI_CHUNK = "gemini_chunk"  # Gemini streaming chunk (incremental)
 MSG_TYPE_TTS_AUDIO = "tts_audio"       # Header for TTS audio data
+MSG_TYPE_TTS_CHUNK = "tts_chunk"       # TTS streaming audio chunk
 MSG_TYPE_LATENCY = "latency"           # Latency metrics for each component
 MSG_TYPE_ERROR = "error"                # Error messages
 
@@ -75,19 +77,38 @@ async def send_transcript(
 
 
 async def send_gemini_response(websocket: WebSocket, response: str) -> None:
-    """Send Gemini's text response to the client.
+    """Send Gemini's complete text response to the client.
     
     This is the tutor's response that will be displayed in the Gemini Response box
     on the frontend. It's also the text that will be converted to speech.
     
     Args:
         websocket: The WebSocket connection to send to
-        response: The tutor's response text
+        response: The tutor's complete response text
     """
     if websocket.client_state.name == "CONNECTED" and response:
         await websocket.send_json({
             "type": MSG_TYPE_GEMINI_RESPONSE,
             "text": response
+        })
+
+
+async def send_gemini_chunk(websocket: WebSocket, chunk: str, is_complete: bool = False) -> None:
+    """Send a streaming chunk of Gemini's response to the client.
+    
+    This is used for streaming responses where text arrives incrementally.
+    The frontend will append chunks to display the response as it's generated.
+    
+    Args:
+        websocket: The WebSocket connection to send to
+        chunk: A chunk of text from Gemini's streaming response
+        is_complete: True if this is the final chunk
+    """
+    if websocket.client_state.name == "CONNECTED" and chunk:
+        await websocket.send_json({
+            "type": MSG_TYPE_GEMINI_CHUNK,
+            "text": chunk,
+            "is_complete": is_complete
         })
 
 
@@ -133,6 +154,51 @@ async def send_tts_audio(websocket: WebSocket, audio_content: bytes) -> None:
         print(f"Error sending TTS audio: {error_msg}")
         import traceback
         traceback.print_exc()
+
+
+async def send_tts_chunk(websocket: WebSocket, audio_chunk: bytes, is_first: bool = False, is_complete: bool = False) -> None:
+    """Send a streaming chunk of TTS audio to the client.
+    
+    This is used for streaming TTS where audio chunks arrive incrementally.
+    The frontend will play chunks as they arrive for lower latency.
+    
+    Args:
+        websocket: The WebSocket connection to send to
+        audio_chunk: Audio chunk data as bytes (LINEAR16 PCM format, 24kHz)
+        is_first: True if this is the first chunk (sends header)
+        is_complete: True if this is the final chunk
+    """
+    if not audio_chunk and not is_complete:
+        return
+        
+    if websocket.client_state.name != "CONNECTED":
+        return
+        
+    try:
+        # Send header with first chunk
+        if is_first and audio_chunk:
+            await websocket.send_json({
+                "type": MSG_TYPE_TTS_CHUNK,
+                "sample_rate": 24000,
+                "format": "LINEAR16",
+                "streaming": True,
+                "is_first": True
+            })
+        
+        # Send the audio chunk as binary (if not empty)
+        if audio_chunk:
+            await websocket.send_bytes(audio_chunk)
+        
+        # Send completion marker if this is the last chunk
+        if is_complete:
+            await websocket.send_json({
+                "type": MSG_TYPE_TTS_CHUNK,
+                "is_complete": True
+            })
+            print(f"TTS streaming complete")
+    except Exception as e:
+        error_msg = str(e) if e else "Unknown error"
+        print(f"Error sending TTS chunk: {error_msg}")
 
 
 async def send_latency(

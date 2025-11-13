@@ -265,6 +265,7 @@ h1 {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
 }
 
 .latency-label {
@@ -302,6 +303,14 @@ h1 {
     color: #dc3545;
     border-color: #dc3545;
     background: #f8d7da;
+}
+
+.latency-breakdown {
+    font-size: 0.85em;
+    color: #6c757d;
+    font-style: italic;
+    margin-left: 4px;
+    display: inline;
 }
 
 /* Responsive: stack vertically on small screens */

@@ -18,13 +18,15 @@ import time
 from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.stt_service import transcribe_streaming_chirp3
-from backend.gemini_service import process_transcript_async
-from backend.tts_service import synthesize_speech_async
+from backend.gemini_service import process_transcript_async, process_transcript_streaming_async
+from backend.tts_service import synthesize_speech_async, synthesize_speech_streaming_async
 from backend.websocket_utils import (
     send_status,
     send_transcript,
     send_gemini_response,
+    send_gemini_chunk,
     send_tts_audio,
+    send_tts_chunk,
     send_latency,
     send_error,
     format_authentication_error,
@@ -316,68 +318,119 @@ async def process_stt_responses(
                     # Get selected language from state
                     selected_lang = language_state["value"]
                     
-                    # Step 1: Get tutor response from Gemini (with timing)
+                    # Step 1: Stream tutor response from Gemini (with timing)
                     gemini_start_time = time.time()
-                    gemini_response = await process_transcript_async(
+                    first_chunk_time = None
+                    full_response = ""
+                    
+                    # Stream Gemini response chunk by chunk
+                    async for chunk in process_transcript_streaming_async(
                         transcript,
                         tutor_language=selected_lang
-                    )
-                    gemini_latency_ms = (time.time() - gemini_start_time) * 1000
-                    
-                    # Send Gemini latency
-                    await send_latency(
-                        websocket,
-                        "gemini",
-                        gemini_latency_ms,
-                        {"model": "gemini-2.5-flash", "response_length": len(gemini_response) if gemini_response else 0}
-                    )
-                    
-                    if gemini_response:
-                        # Log conversation for debugging
-                        print(f"\n[User]: {transcript}")
-                        print(f"[Gemini]: {gemini_response}")
-                        print(f"[Latency] Gemini: {gemini_latency_ms:.2f}ms\n")
+                    ):
+                        # Track time to first chunk
+                        if first_chunk_time is None:
+                            first_chunk_time = time.time()
+                            first_chunk_latency_ms = (first_chunk_time - gemini_start_time) * 1000
+                            await send_latency(
+                                websocket,
+                                "gemini",
+                                first_chunk_latency_ms,
+                                {"model": "gemini-2.5-flash", "metric": "time_to_first_token"}
+                            )
+                            print(f"[Latency] Gemini (first token): {first_chunk_latency_ms:.2f}ms")
                         
-                        # Check connection again before sending
+                        # Accumulate full response for TTS
+                        full_response += chunk
+                        
+                        # Check connection before sending chunk
                         if websocket.client_state.name != "CONNECTED":
-                            print("WebSocket disconnected before sending Gemini response")
+                            print("WebSocket disconnected during Gemini streaming")
                             break
                         
-                        # Step 2: Send Gemini text response to frontend
-                        await send_gemini_response(websocket, gemini_response)
+                        # Send chunk to frontend
+                        await send_gemini_chunk(websocket, chunk, is_complete=False)
+                    
+                    # Send final chunk marker
+                    if full_response and websocket.client_state.name == "CONNECTED":
+                        await send_gemini_chunk(websocket, "", is_complete=True)
                         
-                        # Step 3: Convert Gemini response to speech (with timing)
+                        # Calculate total latency
+                        gemini_total_latency_ms = (time.time() - gemini_start_time) * 1000
+                        await send_latency(
+                            websocket,
+                            "gemini",
+                            gemini_total_latency_ms,
+                            {"model": "gemini-2.5-flash", "response_length": len(full_response), "metric": "total_time"}
+                        )
+                        
+                        # Log conversation for debugging
+                        print(f"\n[User]: {transcript}")
+                        print(f"[Gemini]: {full_response}")
+                        print(f"[Latency] Gemini (total): {gemini_total_latency_ms:.2f}ms\n")
+                        
+                        # Step 2: Stream Gemini response to speech (with timing)
                         # Get selected TTS model from state
                         selected_model_key = tts_model_state["value"]
                         # Map model key to actual model name
                         from backend.tts_service import GEMINI_TTS_MODELS
                         selected_model = GEMINI_TTS_MODELS.get(selected_model_key, GEMINI_TTS_MODELS["flash"])
-                        print(f"Synthesizing speech from Gemini response using model: {selected_model}...")
+                        print(f"Streaming speech synthesis from Gemini response using model: {selected_model}...")
                         
                         tts_start_time = time.time()
-                        audio_content = await synthesize_speech_async(gemini_response, model_name=selected_model)
-                        tts_latency_ms = (time.time() - tts_start_time) * 1000
+                        first_audio_time = None
+                        total_audio_size = 0
+                        chunk_count = 0
                         
-                        # Send TTS latency
-                        if audio_content:
-                            audio_size_kb = len(audio_content) / 1024
+                        # Stream TTS audio chunks as they arrive
+                        async for audio_chunk in synthesize_speech_streaming_async(
+                            full_response,
+                            model_name=selected_model
+                        ):
+                            # Track time to first audio chunk
+                            if first_audio_time is None:
+                                first_audio_time = time.time()
+                                first_chunk_latency_ms = (first_audio_time - tts_start_time) * 1000
+                                await send_latency(
+                                    websocket,
+                                    "tts",
+                                    first_chunk_latency_ms,
+                                    {"model": selected_model, "metric": "time_to_first_audio"}
+                                )
+                                print(f"[Latency] TTS (first chunk): {first_chunk_latency_ms:.2f}ms")
+                            
+                            total_audio_size += len(audio_chunk)
+                            chunk_count += 1
+                            
+                            # Check connection before sending chunk
+                            if websocket.client_state.name != "CONNECTED":
+                                print("WebSocket disconnected during TTS streaming")
+                                break
+                            
+                            # Send chunk to frontend (first chunk sends header)
+                            await send_tts_chunk(
+                                websocket,
+                                audio_chunk,
+                                is_first=(chunk_count == 1),
+                                is_complete=False
+                            )
+                        
+                        # Send completion marker
+                        if websocket.client_state.name == "CONNECTED" and total_audio_size > 0:
+                            await send_tts_chunk(websocket, b"", is_first=False, is_complete=True)
+                            
+                            # Calculate total latency
+                            tts_total_latency_ms = (time.time() - tts_start_time) * 1000
+                            audio_size_kb = total_audio_size / 1024
                             await send_latency(
                                 websocket,
                                 "tts",
-                                tts_latency_ms,
-                                {"model": selected_model, "audio_size_kb": round(audio_size_kb, 2)}
+                                tts_total_latency_ms,
+                                {"model": selected_model, "audio_size_kb": round(audio_size_kb, 2), "chunks": chunk_count, "metric": "total_time"}
                             )
-                            print(f"[Latency] TTS: {tts_latency_ms:.2f}ms (audio: {audio_size_kb:.2f}KB)")
-                        
-                        if audio_content:
-                            # Check connection one more time before sending audio
-                            if websocket.client_state.name == "CONNECTED":
-                                # Step 4: Send audio to frontend for playback
-                                await send_tts_audio(websocket, audio_content)
-                            else:
-                                print("WebSocket disconnected before sending TTS audio")
-                        else:
-                            print("Warning: TTS returned empty audio content")
+                            print(f"[Latency] TTS (total): {tts_total_latency_ms:.2f}ms (audio: {audio_size_kb:.2f}KB, {chunk_count} chunks)")
+                        elif total_audio_size == 0:
+                            print("Warning: TTS streaming returned no audio content")
                 
         except asyncio.TimeoutError:
             # Timeout is normal - check if STT is still running

@@ -17,7 +17,7 @@ import asyncio
 import concurrent.futures
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, AsyncIterator, Iterator
 from dotenv import load_dotenv
 import vertexai
 from vertexai.generative_models import GenerativeModel, GenerationConfig
@@ -363,3 +363,108 @@ async def process_transcript_async(
         # Wait for the result without blocking the event loop
         response = await loop.run_in_executor(None, future.result)
         return response
+
+
+async def process_transcript_streaming_async(
+    transcript: str,
+    model_name: str = "gemini-2.5-flash",
+    tutor_language: Optional[str] = None
+) -> AsyncIterator[str]:
+    """Process transcript with Gemini using streaming (yields tokens as they arrive).
+    
+    This function streams Gemini's response token by token, allowing the frontend
+    to display text incrementally for a better user experience.
+    
+    Args:
+        transcript: The user's spoken text (transcribed from speech)
+        model_name: Which Gemini model to use (default: gemini-2.5-flash)
+        tutor_language: Language for tutoring (default: from config)
+    
+    Yields:
+        Text chunks (tokens) as they arrive from Gemini
+    """
+    try:
+        # Make sure Vertex AI is initialized
+        initialize_vertex_ai()
+        
+        # Determine which language to use for tutoring
+        language = tutor_language or TUTOR_LANGUAGE
+        
+        # Get the system instruction that tells Gemini how to behave
+        system_instruction = get_tutor_system_instruction(language)
+        
+        # Create the Gemini model with the tutor persona
+        model = GenerativeModel(
+            model_name,
+            system_instruction=system_instruction
+        )
+        
+        # The prompt is simply the user's transcript
+        prompt = transcript
+        
+        # Configure response generation
+        generation_config = GenerationConfig(
+            temperature=0.7,
+        )
+        
+        # Stream response from Gemini
+        # This yields chunks as they're generated
+        response_stream = model.generate_content(
+            prompt,
+            generation_config=generation_config,
+            stream=True  # Enable streaming
+        )
+        
+        # Process stream in thread pool since it's blocking
+        loop = asyncio.get_event_loop()
+        
+        accumulated_text = ""
+        
+        def stream_generator():
+            """Generator that yields text chunks from streaming response."""
+            nonlocal accumulated_text
+            for chunk in response_stream:
+                # Extract text from chunk
+                chunk_text = None
+                if hasattr(chunk, 'text') and chunk.text:
+                    chunk_text = chunk.text
+                elif hasattr(chunk, 'candidates') and chunk.candidates:
+                    candidate = chunk.candidates[0]
+                    if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                        part = candidate.content.parts[0]
+                        if hasattr(part, 'text') and part.text:
+                            chunk_text = part.text
+                
+                if chunk_text:
+                    # Get only the new text (incremental)
+                    if len(chunk_text) > len(accumulated_text):
+                        new_text = chunk_text[len(accumulated_text):]
+                        accumulated_text = chunk_text
+                        yield new_text
+        
+        # Run streaming in thread pool and yield chunks asynchronously
+        stream = stream_generator()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            while True:
+                try:
+                    # Get next chunk from stream (blocking operation)
+                    chunk = await loop.run_in_executor(
+                        executor,
+                        lambda: next(stream, None)
+                    )
+                    if chunk is None:
+                        break
+                    # Clean the chunk before yielding
+                    cleaned_chunk = clean_text_for_speech(chunk)
+                    if cleaned_chunk:
+                        yield cleaned_chunk
+                except StopIteration:
+                    break
+                except Exception as e:
+                    print(f"Error in streaming chunk: {e}")
+                    break
+                    
+    except Exception as e:
+        print(f"Error processing transcript with Gemini streaming: {e}")
+        # Return empty iterator on error
+        return
