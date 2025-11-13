@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Push-to-Talk Transcription</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" href="data:,">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>Push-to-Talk Transcription</h1>
+            <p class="subtitle">Hold the button and speak. Release to transcribe.</p>
+            
+            <div class="language-selector">
+                <label for="languageSelect">Choose Language:</label>
+                <select id="languageSelect" class="language-select">
+                    <option value="Spanish">Spanish</option>
+                    <option value="German">German</option>
+                    <option value="French">French</option>
+                    <option value="Telugu">Telugu</option>
+                </select>
+            </div>
+            
+            <div class="controls">
+                <button id="talkButton" class="talk-button">
+                    <span class="button-text">Hold to Talk</span>
+                </button>
+            </div>
+            
+            <div class="status" id="status">Ready</div>
+            
+            <div class="results-container">
+                <div class="transcript-container">
+                    <h2>Transcript</h2>
+                    <div class="transcript" id="transcript">
+                        <p class="placeholder">Your transcription will appear here...</p>
+                    </div>
+                </div>
+                
+                <div class="gemini-container">
+                    <h2>Gemini Response</h2>
+                    <div class="gemini-response" id="geminiResponse">
+                        <p class="placeholder">Gemini's response will appear here...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+

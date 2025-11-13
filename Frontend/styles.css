@@ -1,0 +1,243 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.container {
+    width: 100%;
+    max-width: 1200px;
+}
+
+.card {
+    background: white;
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    padding: 40px;
+    text-align: center;
+}
+
+h1 {
+    color: #333;
+    margin-bottom: 10px;
+    font-size: 2em;
+}
+
+.subtitle {
+    color: #666;
+    margin-bottom: 20px;
+    font-size: 1.1em;
+}
+
+.language-selector {
+    margin: 20px 0 30px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+}
+
+.language-selector label {
+    color: #333;
+    font-weight: 600;
+    font-size: 1em;
+}
+
+.language-select {
+    padding: 10px 20px;
+    border: 2px solid #667eea;
+    border-radius: 8px;
+    background: white;
+    color: #333;
+    font-size: 1em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    min-width: 150px;
+}
+
+.language-select:hover {
+    background: #f8f9fa;
+    border-color: #764ba2;
+}
+
+.language-select:focus {
+    outline: none;
+    border-color: #764ba2;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+}
+
+.controls {
+    margin: 40px 0;
+}
+
+.talk-button {
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    border: none;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    font-size: 1.2em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+    position: relative;
+    overflow: hidden;
+}
+
+.talk-button:hover {
+    transform: scale(1.05);
+    box-shadow: 0 15px 40px rgba(102, 126, 234, 0.5);
+}
+
+.talk-button:active,
+.talk-button.recording {
+    transform: scale(0.95);
+    background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
+    box-shadow: 0 5px 20px rgba(245, 87, 108, 0.6);
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        box-shadow: 0 5px 20px rgba(245, 87, 108, 0.6);
+    }
+    50% {
+        box-shadow: 0 5px 40px rgba(245, 87, 108, 0.9);
+    }
+}
+
+.button-text {
+    position: relative;
+    z-index: 1;
+}
+
+.status {
+    margin: 20px 0;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    color: #666;
+    font-weight: 500;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.status.recording {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.status.connected {
+    background: #d4edda;
+    color: #155724;
+}
+
+.status.error {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.results-container {
+    margin-top: 30px;
+    display: flex;
+    gap: 20px;
+    flex-wrap: nowrap;
+    width: 100%;
+}
+
+.transcript-container,
+.gemini-container {
+    flex: 1 1 50%;
+    min-width: 0;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+}
+
+.transcript-container h2,
+.gemini-container h2 {
+    color: #333;
+    margin-bottom: 15px;
+    font-size: 1.5em;
+}
+
+.transcript,
+.gemini-response {
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 20px;
+    min-height: 200px;
+    max-height: 400px;
+    overflow-y: auto;
+    border: 2px solid #e9ecef;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    flex: 1;
+    width: 100%;
+}
+
+.gemini-response {
+    background: #e8f5e9;
+    border: 2px solid #c8e6c9;
+}
+
+.transcript p,
+.gemini-response p {
+    margin: 10px 0;
+    line-height: 1.6;
+    color: #333;
+}
+
+.gemini-response p {
+    color: #2e7d32;
+}
+
+.transcript .placeholder,
+.gemini-response .placeholder {
+    color: #999;
+    font-style: italic;
+    text-align: center;
+    padding: 20px;
+}
+
+.transcript .interim {
+    color: #666;
+    font-style: italic;
+}
+
+.transcript .final {
+    color: #333;
+    font-weight: 500;
+}
+
+.gemini-response .gemini-response-text {
+    color: #2e7d32;
+    font-weight: 500;
+}
+
+/* Responsive: stack vertically on small screens */
+@media (max-width: 768px) {
+    .results-container {
+        flex-direction: column;
+    }
+    
+    .transcript-container,
+    .gemini-container {
+        min-width: 100%;
+    }
+}
+
