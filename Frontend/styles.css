@@ -237,6 +237,82 @@ h1 {
     font-weight: 500;
 }
 
+/* Latency Metrics */
+.latency-container {
+    margin: 20px 0;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 10px;
+    border: 2px solid #e9ecef;
+}
+
+.latency-container h3 {
+    margin: 0 0 10px 0;
+    color: #333;
+    font-size: 1.1em;
+    text-align: center;
+}
+
+.latency-metrics {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.latency-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.latency-label {
+    color: #666;
+    font-weight: 600;
+    font-size: 0.95em;
+}
+
+.latency-value {
+    color: #333;
+    font-weight: 700;
+    font-size: 1.1em;
+    padding: 4px 12px;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+    min-width: 60px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.latency-value.latency-good {
+    color: #28a745;
+    border-color: #28a745;
+    background: #d4edda;
+}
+
+.latency-value.latency-ok {
+    color: #ffc107;
+    border-color: #ffc107;
+    background: #fff3cd;
+}
+
+.latency-value.latency-slow {
+    color: #dc3545;
+    border-color: #dc3545;
+    background: #f8d7da;
+}
+
+.latency-breakdown {
+    font-size: 0.85em;
+    color: #6c757d;
+    font-style: italic;
+    margin-left: 4px;
+    display: inline;
+}
+
 /* Responsive: stack vertically on small screens */
 @media (max-width: 768px) {
     .results-container {
@@ -246,6 +322,11 @@ h1 {
     .transcript-container,
     .gemini-container {
         min-width: 100%;
+    }
+    
+    .latency-metrics {
+        flex-direction: column;
+        gap: 10px;
     }
 }
 
