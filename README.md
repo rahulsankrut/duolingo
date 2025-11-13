@@ -7,14 +7,14 @@ A real-time language tutoring application that uses Google Cloud Speech-to-Text,
 - **Push-to-Talk**: Hold a button to speak, release to transcribe
 - **Real-time Transcription**: Uses Google Cloud Speech-to-Text with Chirp3 model
 - **AI Language Tutor**: Powered by Gemini 2.5 Flash for natural conversations
-- **Text-to-Speech**: Chirp3 HD voices for natural-sounding responses
+- **Text-to-Speech**: Gemini-TTS voices for natural-sounding, expressive responses
 - **Multi-language Support**: Spanish, German, French, Telugu, and more
 - **Automatic Language Detection**: TTS automatically detects and uses the correct voice
 
 ## Architecture
 
 ```
-User Speech → STT (Chirp3) → Gemini 2.5 Flash → TTS (Chirp3 HD) → Audio Playback
+User Speech → STT (Chirp3) → Gemini 2.5 Flash → TTS (Gemini-TTS) → Audio Playback
 ```
 
 ## Prerequisites
@@ -22,7 +22,7 @@ User Speech → STT (Chirp3) → Gemini 2.5 Flash → TTS (Chirp3 HD) → Audio 
 1. **Google Cloud Project** with the following APIs enabled:
    - Speech-to-Text API
    - Vertex AI API (for Gemini)
-   - Text-to-Speech API
+   - Text-to-Speech API (with Gemini-TTS enabled)
 
 2. **Authentication**: Application Default Credentials (ADC)
    ```bash
@@ -61,9 +61,15 @@ Create a `.env` file in the project root:
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=us-central1
 TUTOR_LANGUAGE=Spanish
+GEMINI_TTS_MODEL=flash
 API_HOST=0.0.0.0
 API_PORT=8000
 ```
+
+**Gemini-TTS Model Options:**
+- `flash` (default): `gemini-2.5-flash-tts` - Fast, efficient model (recommended for most use cases)
+- `lite`: `gemini-2.5-flash-lite-preview-tts` - Lightweight preview model
+- `pro`: `gemini-2.5-pro-tts` - High-quality, more capable model
 
 ### 5. Start Backend Server
 
@@ -147,7 +153,7 @@ duolingo/
 - **Google Cloud Services**:
   - Speech-to-Text API (Chirp3)
   - Vertex AI (Gemini 2.5 Flash)
-  - Text-to-Speech API (Chirp3 HD)
+  - Text-to-Speech API (Gemini-TTS)
 - **Real-time Communication**: WebSockets
 
 ## License

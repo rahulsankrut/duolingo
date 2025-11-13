@@ -187,7 +187,8 @@ async def receive_audio_chunks(
     websocket: WebSocket,
     audio_queue: asyncio.Queue,
     streaming_active: dict,
-    language_state: dict
+    language_state: dict,
+    tts_model_state: dict
 ) -> None:
     """Receive audio chunks from the client and put them in a queue.
     
@@ -203,6 +204,8 @@ async def receive_audio_chunks(
                          When set to False, stops receiving
         language_state: Dictionary with 'value' key to store selected language
                         Updated when client sends language change message
+        tts_model_state: Dictionary with 'value' key to store selected TTS model
+                        Updated when client sends TTS model change message
     """
     while streaming_active["value"]:
         try:
@@ -235,6 +238,10 @@ async def receive_audio_chunks(
                     # Update the language state
                     language_state["value"] = message.get("language", "Spanish")
                     print(f"Language updated to: {language_state['value']}")
+                elif message.get("type") == "set_tts_model":
+                    # Update TTS model state
+                    tts_model_state["value"] = message.get("model", "flash")
+                    print(f"TTS model updated to: {tts_model_state['value']}")
                     
         except asyncio.TimeoutError:
             # Timeout is normal - just continue waiting

@@ -15,9 +15,13 @@ const status = document.getElementById('status');
 const transcript = document.getElementById('transcript');
 const geminiResponse = document.getElementById('geminiResponse');
 const languageSelect = document.getElementById('languageSelect');
+const ttsModelSelect = document.getElementById('ttsModelSelect');
 
 // Selected language (default: Spanish)
 let selectedLanguage = 'Spanish';
+
+// Selected TTS model (default: flash)
+let selectedTTSModel = 'flash';
 
 // Event Listeners
 talkButton.addEventListener('mousedown', startRecording);
@@ -46,6 +50,20 @@ languageSelect.addEventListener('change', (e) => {
     }
 });
 
+// TTS model selection handler
+ttsModelSelect.addEventListener('change', (e) => {
+    selectedTTSModel = e.target.value;
+    console.log('TTS model changed to:', selectedTTSModel);
+    
+    // Send TTS model selection to backend if WebSocket is connected
+    if (websocket && websocket.readyState === WebSocket.OPEN) {
+        websocket.send(JSON.stringify({
+            type: 'set_tts_model',
+            model: selectedTTSModel
+        }));
+    }
+});
+
 // Functions
 async function connectWebSocket() {
     return new Promise((resolve, reject) => {
@@ -69,11 +87,17 @@ async function connectWebSocket() {
             status.textContent = 'Connected';
             status.className = 'status connected';
             
-            // Send initial language selection
-            websocket.send(JSON.stringify({
-                type: 'set_language',
-                language: selectedLanguage
-            }));
+                    // Send initial language selection
+                    websocket.send(JSON.stringify({
+                        type: 'set_language',
+                        language: selectedLanguage
+                    }));
+                    
+                    // Send initial TTS model selection
+                    websocket.send(JSON.stringify({
+                        type: 'set_tts_model',
+                        model: selectedTTSModel
+                    }));
             
             resolve();
         };

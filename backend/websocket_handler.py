@@ -72,6 +72,7 @@ async def handle_websocket_connection(websocket: WebSocket) -> None:
         response_queue = asyncio.Queue()  # Queue for STT transcription results
         streaming_active = {"value": True}  # Controls when to stop processing
         language_state = {"value": "Spanish"}  # Current selected language
+        tts_model_state = {"value": "flash"}  # Current selected TTS model
         
         # ====================================================================
         # Start Processing Tasks
@@ -81,11 +82,11 @@ async def handle_websocket_connection(websocket: WebSocket) -> None:
         # 2. Process audio through STT -> Gemini -> TTS pipeline
         
         receive_task = asyncio.create_task(
-            receive_audio_chunks(websocket, audio_queue, streaming_active, language_state)
+            receive_audio_chunks(websocket, audio_queue, streaming_active, language_state, tts_model_state)
         )
         
         stt_task = asyncio.create_task(
-            process_stt_streaming(websocket, audio_queue, response_queue, streaming_active, language_state)
+            process_stt_streaming(websocket, audio_queue, response_queue, streaming_active, language_state, tts_model_state)
         )
         
         # Wait for both tasks to complete
@@ -118,7 +119,8 @@ async def process_stt_streaming(
     audio_queue: asyncio.Queue,
     response_queue: asyncio.Queue,
     streaming_active: dict,
-    language_state: dict
+    language_state: dict,
+    tts_model_state: dict
 ) -> None:
     """Process audio through STT and send results to client in real-time.
     
@@ -178,7 +180,7 @@ async def process_stt_streaming(
             
             # Process STT responses as they arrive
             # This also handles Gemini and TTS processing for final transcripts
-            await process_stt_responses(websocket, response_queue, stt_future, language_state)
+            await process_stt_responses(websocket, response_queue, stt_future, language_state, tts_model_state)
         
         # Wait for transfer task to complete
         await transfer_task
@@ -241,6 +243,7 @@ async def process_stt_responses(
     response_queue: asyncio.Queue,
     stt_future: concurrent.futures.Future,
     language_state: dict,
+    tts_model_state: dict,
     timeout: float = 30.0
 ) -> None:
     """Process STT responses and orchestrate the complete pipeline.
@@ -256,6 +259,7 @@ async def process_stt_responses(
         response_queue: Queue containing STT responses
         stt_future: Future for STT processing thread (to check if still running)
         language_state: Dictionary storing selected language
+        tts_model_state: Dictionary storing selected TTS model
         timeout: How long to wait for responses before checking if STT is done
     """
     while True:
@@ -313,8 +317,13 @@ async def process_stt_responses(
                         await send_gemini_response(websocket, gemini_response)
                         
                         # Step 3: Convert Gemini response to speech
-                        print("Synthesizing speech from Gemini response...")
-                        audio_content = await synthesize_speech_async(gemini_response)
+                        # Get selected TTS model from state
+                        selected_model_key = tts_model_state["value"]
+                        # Map model key to actual model name
+                        from backend.tts_service import GEMINI_TTS_MODELS
+                        selected_model = GEMINI_TTS_MODELS.get(selected_model_key, GEMINI_TTS_MODELS["flash"])
+                        print(f"Synthesizing speech from Gemini response using model: {selected_model}...")
+                        audio_content = await synthesize_speech_async(gemini_response, model_name=selected_model)
                         
                         if audio_content:
                             # Check connection one more time before sending audio

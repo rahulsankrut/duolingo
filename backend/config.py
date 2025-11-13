@@ -33,6 +33,16 @@ GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 TUTOR_LANGUAGE = os.getenv("TUTOR_LANGUAGE", "Spanish")
 
 # ============================================================================
+# Text-to-Speech Configuration
+# ============================================================================
+
+# Gemini-TTS model selection
+# Options: "flash" (gemini-2.5-flash-tts), "lite" (gemini-2.5-flash-lite-preview-tts),
+#          or "pro" (gemini-2.5-pro-tts)
+# Default: "flash" (fast and efficient, recommended for most use cases)
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "flash")
+
+# ============================================================================
 # API Server Configuration
 # ============================================================================
 
