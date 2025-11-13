@@ -16,6 +16,9 @@ const transcript = document.getElementById('transcript');
 const geminiResponse = document.getElementById('geminiResponse');
 const languageSelect = document.getElementById('languageSelect');
 const ttsModelSelect = document.getElementById('ttsModelSelect');
+const sttLatency = document.getElementById('sttLatency');
+const geminiLatency = document.getElementById('geminiLatency');
+const ttsLatency = document.getElementById('ttsLatency');
 
 // Selected language (default: Spanish)
 let selectedLanguage = 'Spanish';
@@ -156,12 +159,57 @@ function handleWebSocketMessage(message) {
             displayGeminiResponse(message.text);
             break;
         
+        case 'latency':
+            displayLatency(message.component, message.latency_ms, message.details);
+            break;
+        
         case 'error':
             console.error('Error:', message.message);
             status.textContent = 'Error: ' + message.message;
             status.className = 'status error';
             break;
     }
+}
+
+function displayLatency(component, latencyMs, details) {
+    const latencyText = `${latencyMs}ms`;
+    let element = null;
+    
+    switch (component) {
+        case 'stt':
+            element = sttLatency;
+            break;
+        case 'gemini':
+            element = geminiLatency;
+            break;
+        case 'tts':
+            element = ttsLatency;
+            break;
+    }
+    
+    if (element) {
+        element.textContent = latencyText;
+        element.className = 'latency-value';
+        
+        // Color code based on latency
+        if (latencyMs < 500) {
+            element.classList.add('latency-good');
+        } else if (latencyMs < 1500) {
+            element.classList.add('latency-ok');
+        } else {
+            element.classList.add('latency-slow');
+        }
+        
+        // Add tooltip with details if available
+        if (details) {
+            const detailsText = Object.entries(details)
+                .map(([key, value]) => `${key}: ${value}`)
+                .join(', ');
+            element.title = detailsText;
+        }
+    }
+    
+    console.log(`[Latency] ${component}: ${latencyMs}ms`, details || '');
 }
 
 function displayTranscript(text, isFinal) {

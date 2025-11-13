@@ -26,6 +26,7 @@ MSG_TYPE_STATUS = "status"              # Status updates (e.g., "Connected")
 MSG_TYPE_TRANSCRIPT = "transcript"      # Speech transcription results
 MSG_TYPE_GEMINI_RESPONSE = "gemini_response"  # Gemini tutor's text response
 MSG_TYPE_TTS_AUDIO = "tts_audio"       # Header for TTS audio data
+MSG_TYPE_LATENCY = "latency"           # Latency metrics for each component
 MSG_TYPE_ERROR = "error"                # Error messages
 
 
@@ -132,6 +133,34 @@ async def send_tts_audio(websocket: WebSocket, audio_content: bytes) -> None:
         print(f"Error sending TTS audio: {error_msg}")
         import traceback
         traceback.print_exc()
+
+
+async def send_latency(
+    websocket: WebSocket,
+    component: str,
+    latency_ms: float,
+    details: Optional[dict] = None
+) -> None:
+    """Send latency metrics for a component to the client.
+    
+    Args:
+        websocket: The WebSocket connection to send to
+        component: Component name (e.g., "stt", "gemini", "tts")
+        latency_ms: Latency in milliseconds
+        details: Optional additional details about the latency
+    """
+    if websocket.client_state.name == "CONNECTED":
+        try:
+            message = {
+                "type": MSG_TYPE_LATENCY,
+                "component": component,
+                "latency_ms": round(latency_ms, 2),
+            }
+            if details:
+                message["details"] = details
+            await websocket.send_json(message)
+        except Exception:
+            pass  # Connection may be closed
 
 
 async def send_error(websocket: WebSocket, message: str) -> None:

@@ -14,6 +14,7 @@ All processing happens in real-time using WebSocket for bidirectional communicat
 import asyncio
 import concurrent.futures
 import queue as sync_queue
+import time
 from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.stt_service import transcribe_streaming_chirp3
@@ -24,6 +25,7 @@ from backend.websocket_utils import (
     send_transcript,
     send_gemini_response,
     send_tts_audio,
+    send_latency,
     send_error,
     format_authentication_error,
     receive_audio_chunks,
@@ -155,6 +157,9 @@ async def process_stt_streaming(
         # This ensures we have enough audio for the API to process
         await asyncio.sleep(0.1)
         
+        # Track STT start time for latency measurement
+        stt_start_time = time.time()
+        
         # Create generator function that yields audio chunks from sync queue
         # STT API expects an iterator/generator
         audio_stream = create_audio_stream_generator(sync_audio_queue, streaming_active)
@@ -180,7 +185,7 @@ async def process_stt_streaming(
             
             # Process STT responses as they arrive
             # This also handles Gemini and TTS processing for final transcripts
-            await process_stt_responses(websocket, response_queue, stt_future, language_state, tts_model_state)
+            await process_stt_responses(websocket, response_queue, stt_future, language_state, tts_model_state, stt_start_time)
         
         # Wait for transfer task to complete
         await transfer_task
@@ -244,6 +249,7 @@ async def process_stt_responses(
     stt_future: concurrent.futures.Future,
     language_state: dict,
     tts_model_state: dict,
+    stt_start_time: float,
     timeout: float = 30.0
 ) -> None:
     """Process STT responses and orchestrate the complete pipeline.
@@ -260,6 +266,7 @@ async def process_stt_responses(
         stt_future: Future for STT processing thread (to check if still running)
         language_state: Dictionary storing selected language
         tts_model_state: Dictionary storing selected TTS model
+        stt_start_time: Timestamp when STT processing started (for latency calculation)
         timeout: How long to wait for responses before checking if STT is done
     """
     while True:
@@ -281,6 +288,18 @@ async def process_stt_responses(
             transcript_data = extract_transcript_from_response(item)
             if transcript_data:
                 transcript, is_final = transcript_data
+                
+                # Calculate and send STT latency for final transcripts
+                if is_final and transcript:
+                    stt_latency_ms = (time.time() - stt_start_time) * 1000
+                    await send_latency(
+                        websocket,
+                        "stt",
+                        stt_latency_ms,
+                        {"transcript_length": len(transcript)}
+                    )
+                    print(f"[Latency] STT: {stt_latency_ms:.2f}ms")
+                
                 # Send transcript to client (both interim and final)
                 await send_transcript(websocket, transcript, is_final)
                 
@@ -297,16 +316,27 @@ async def process_stt_responses(
                     # Get selected language from state
                     selected_lang = language_state["value"]
                     
-                    # Step 1: Get tutor response from Gemini
+                    # Step 1: Get tutor response from Gemini (with timing)
+                    gemini_start_time = time.time()
                     gemini_response = await process_transcript_async(
                         transcript,
                         tutor_language=selected_lang
+                    )
+                    gemini_latency_ms = (time.time() - gemini_start_time) * 1000
+                    
+                    # Send Gemini latency
+                    await send_latency(
+                        websocket,
+                        "gemini",
+                        gemini_latency_ms,
+                        {"model": "gemini-2.5-flash", "response_length": len(gemini_response) if gemini_response else 0}
                     )
                     
                     if gemini_response:
                         # Log conversation for debugging
                         print(f"\n[User]: {transcript}")
-                        print(f"[Gemini]: {gemini_response}\n")
+                        print(f"[Gemini]: {gemini_response}")
+                        print(f"[Latency] Gemini: {gemini_latency_ms:.2f}ms\n")
                         
                         # Check connection again before sending
                         if websocket.client_state.name != "CONNECTED":
@@ -316,14 +346,28 @@ async def process_stt_responses(
                         # Step 2: Send Gemini text response to frontend
                         await send_gemini_response(websocket, gemini_response)
                         
-                        # Step 3: Convert Gemini response to speech
+                        # Step 3: Convert Gemini response to speech (with timing)
                         # Get selected TTS model from state
                         selected_model_key = tts_model_state["value"]
                         # Map model key to actual model name
                         from backend.tts_service import GEMINI_TTS_MODELS
                         selected_model = GEMINI_TTS_MODELS.get(selected_model_key, GEMINI_TTS_MODELS["flash"])
                         print(f"Synthesizing speech from Gemini response using model: {selected_model}...")
+                        
+                        tts_start_time = time.time()
                         audio_content = await synthesize_speech_async(gemini_response, model_name=selected_model)
+                        tts_latency_ms = (time.time() - tts_start_time) * 1000
+                        
+                        # Send TTS latency
+                        if audio_content:
+                            audio_size_kb = len(audio_content) / 1024
+                            await send_latency(
+                                websocket,
+                                "tts",
+                                tts_latency_ms,
+                                {"model": selected_model, "audio_size_kb": round(audio_size_kb, 2)}
+                            )
+                            print(f"[Latency] TTS: {tts_latency_ms:.2f}ms (audio: {audio_size_kb:.2f}KB)")
                         
                         if audio_content:
                             # Check connection one more time before sending audio
